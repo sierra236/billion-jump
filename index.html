@@ -183,15 +183,57 @@ function showMenu(){
 }
 
 function showLeaderboard(){
-  const c=card(`<h1 class="title">Leaderboard</h1>
-    <div id="lb" style="max-height:60vh;overflow:auto;text-align:left;padding:8px;display:flex;flex-direction:column;gap:6px"><div class="muted">Loading...</div></div>
-    <div class="row" style="margin-top:10px"><button class="btn ghost" data-action="back">Back</button></div>`);
-  fetch('/api/leaderboard').then(r=>r.json()).then(d=>{
-    const rows=Array.isArray(d.rows)?d.rows:[]; const lb=c.querySelector('#lb');
-    if(!rows.length){ lb.innerHTML='<div class="muted">No scores yet</div>'; return; }
-    lb.innerHTML=rows.map((r,i)=>`<div style="display:flex;justify-content:space-between;border-bottom:1px dashed rgba(255,255,255,.1);padding:8px 4px"><span>${i+1}. ${r.name}</span><b>${r.best}</b></div>`).join('');
-  }).catch(()=>{ c.querySelector('#lb').innerHTML='<div class="muted">Unable to load</div>'; });
+  const c = card(`
+    <h1 class="title">Leaderboard</h1>
+    <div id="lb" style="max-height:60vh;overflow:auto;text-align:left;padding:8px;display:flex;flex-direction:column;gap:6px">
+      <div class="muted">Loading...</div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn ghost" data-action="back">Back</button>
+    </div>
+  `);
+
+  const url = new URL('/api/leaderboard', window.location.origin);
+  url.searchParams.set('limit', '20');
+  if (nickname) url.searchParams.set('name', nickname);
+
+  fetch(url.toString())
+    .then(r => r.json())
+    .then(d => {
+      const rows = Array.isArray(d.rows) ? d.rows : [];
+      const me = d.me || null;
+      const lb = c.querySelector('#lb');
+
+      if (!rows.length) {
+        lb.innerHTML = '<div class="muted">No scores yet</div>';
+        return;
+      }
+
+      // Top 20 render
+      lb.innerHTML = rows.map((r, i) =>
+        `<div style="display:flex;justify-content:space-between;border-bottom:1px dashed rgba(255,255,255,.1);padding:8px 4px">
+           <span>${i+1}. ${r.name}</span><b>${r.best}</b>
+         </div>`
+      ).join('');
+
+      // me varsa ve listede yoksa (isme göre karşılaştırma)
+      if (me && me.name && !rows.some(r => r.name === me.name)) {
+        // ayırıcı
+        const sep = document.createElement('div');
+        sep.style.cssText = 'opacity:.5;border-top:1px solid rgba(255,255,255,.12);margin:4px 0';
+        lb.appendChild(sep);
+
+        const you = document.createElement('div');
+        you.style.cssText = 'display:flex;justify-content:space-between;padding:8px 4px';
+        you.innerHTML = `<span>You (#${me.rank}): ${me.name}</span><b>${me.best}</b>`;
+        lb.appendChild(you);
+      }
+    })
+    .catch(() => {
+      c.querySelector('#lb').innerHTML = '<div class="muted">Unable to load</div>';
+    });
 }
+
 
 function showGameOver(){
   card(`<h1 class="title">Game Over</h1>
