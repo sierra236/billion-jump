@@ -10,6 +10,7 @@
     "type": "git",
     "url": "git+https://github.com/sierra236/billion-jump.git"
   },
+  "type": "commonjs",
   "keywords": [],
   "author": "",
   "license": "ISC",
