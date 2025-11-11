@@ -165,6 +165,10 @@ module.exports = async (req, res) => {
     // simülasyon
     const { score: verifiedScore } = simulateRun({ seed, inputs, W, H, SCALE });
 
+    if (verifiedScore <= 0) {
+    return res.status(200).json({ ok: true, best: null, verifiedScore });
+}
+
     // basit mantık dışı kontrol (isteğe bağlı)
     const sps = verifiedScore / Math.max(1, (inputs.durationMs/1000));
     if (verifiedScore > 2000 || sps > 8) {

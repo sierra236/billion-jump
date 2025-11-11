@@ -254,7 +254,7 @@ function drawUI(){
 }
 
 /* UI events */
-ui.addEventListener('click',(e)=>{
+ui.addEventListener('click', async (e)=>{
   const el=e.target.closest('[data-action]'); if(!el) return;
   const act=el.getAttribute('data-action');
   if(act==='save-name'){
@@ -262,15 +262,29 @@ ui.addEventListener('click',(e)=>{
     if(v.length<2||v.length>20) return document.getElementById('nameInput').focus();
     nickname=v; localStorage.setItem(LS.name,nickname); state=State.MENU; drawUI(); return;
   }
-    if (act === 'play') {
-    clearUI();
-    sessionToken = null;   // <—
-    sessionSeed  = null;   // <—
-    Promise.resolve().then(() => ensureSession()).finally(() => {
-        state = State.READY; reset();
-    });
-    return;
-    }
+if (act === 'play') {
+  // UI: küçük loading kartı
+  card(`
+    <h1 class="title">Getting ready…</h1>
+    <div class="muted">Syncing session & seed</div>
+  `);
+
+  // her oyunda yeni token/seed al
+  sessionToken = null;
+  sessionSeed  = null;
+
+  try {
+    await ensureSession();           // <-- seed ve rng garanti
+  } catch (e) {
+    console.error('session failed before play', e);
+  }
+
+  state = State.READY;
+  reset();
+  clearUI();
+  return;
+}
+
   if(act==='lb'){ state=State.LB; drawUI(); return; }
   if(act==='back'){ state=State.MENU; drawUI(); return; }
   if(act==='menu'){ state=State.MENU; drawUI(); return; }
