@@ -264,11 +264,10 @@ ui.addEventListener('click',(e)=>{
   }
     if (act === 'play') {
     clearUI();
-    sessionToken = null;
-    sessionSeed = null;
+    sessionToken = null;   // <—
+    sessionSeed  = null;   // <—
     Promise.resolve().then(() => ensureSession()).finally(() => {
-        state = State.READY;
-        reset();
+        state = State.READY; reset();
     });
     return;
     }

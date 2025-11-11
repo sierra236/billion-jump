@@ -1,11 +1,11 @@
+// api/leaderboard.js
 const { sql } = require('@vercel/postgres');
 
 module.exports = async (req, res) => {
   try {
-    // sadece ilk 20 gösterilecek
-    const limit = 20;
+    // LB cevabını cache’leme (geliştirirken net görmek için)
+    res.setHeader('Cache-Control', 'no-store');
 
-    // tablo yoksa oluştur
     await sql`
       CREATE TABLE IF NOT EXISTS scores (
         id SERIAL PRIMARY KEY,
@@ -14,17 +14,16 @@ module.exports = async (req, res) => {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `;
+    await sql`CREATE INDEX IF NOT EXISTS idx_scores_best ON scores(best DESC);`;
 
-    // en yüksek 20 skor
+    // Sadece pozitif skorlar, ilk 20
     const { rows } = await sql`
       SELECT name, best
       FROM scores
+      WHERE best > 0
       ORDER BY best DESC, updated_at ASC
-      LIMIT ${limit};
+      LIMIT 20;
     `;
-
-    // vercel edge cache (isteğe bağlı)
-    res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=120');
 
     return res.status(200).json({ ok: true, rows });
   } catch (e) {
