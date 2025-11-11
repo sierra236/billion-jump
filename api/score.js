@@ -59,14 +59,18 @@ function simulateRun({ seed, inputs, W, H, SCALE }) {
     const dx=cx-nx,dy=cy-ny; return dx*dx+dy*dy<=r*r;
   }
 
-  // ---- FLAP zamanlaması: ms aralığına göre tüket ----
-  const flaps = Array.isArray(inputs.flapsMs)
+  // ---- FLAP zamanlaması: ilk flap'ı 0'a hizala (client READY beklemesi çıkar)
+  const rawFlaps = Array.isArray(inputs.flapsMs)
     ? inputs.flapsMs.map(v => Math.max(0, Math.floor(v))).sort((a,b)=>a-b)
     : [];
+  const offset = rawFlaps.length ? rawFlaps[0] : 0;
+  const flaps = rawFlaps.map(v => v - offset); // şimdi ilk flap = 0
   let fi = 0;
 
   const dt=8.333, dtSec=dt/1000;
-  const totalMs=Math.min(Math.max(1000, inputs.durationMs|0), 10*60*1000);
+  // duration'dan offset'i çıkar (client tarafındaki başlangıç gecikmesi düşülür)
+  const dur = Math.max(0, (inputs.durationMs|0) - offset);
+  const totalMs = Math.min(Math.max(1000, dur), 10*60*1000);
   let ms=0, alive=true;
 
   while(alive && ms<=totalMs){
@@ -173,7 +177,10 @@ module.exports = async (req, res) => {
     // simülasyon
     const { score: verifiedScore } = simulateRun({ seed, inputs, W, H, SCALE });
 
-    // 0 skoru yazma (sadece bilgi döndür)
+    // token'ı her durumda tüket (tekrar replay engellemek için)
+    await sql`UPDATE sessions SET consumed_at = NOW() WHERE token_hash=${tokenHash};`;
+
+    // 0 skoru yazma ama token tüketildi (client için bilgi döndür)
     if (verifiedScore <= 0) {
       return res.status(200).json({ ok: true, best: null, verifiedScore });
     }
@@ -183,9 +190,6 @@ module.exports = async (req, res) => {
     if (verifiedScore > 2000 || sps > 8) {
       return res.status(400).json({ ok:false, error:'implausible' });
     }
-
-    // token'ı tüket (tek kullanımlık)
-    await sql`UPDATE sessions SET consumed_at = NOW() WHERE token_hash=${tokenHash};`;
 
     // sadece en yüksek skoru tut (upsert)
     const { rows } = await sql`
