@@ -35,10 +35,8 @@
 
 <script>
 (()=>{
-// Tema
 const THEME = { primary:'#1F50FF', primaryMid:'#1636C9', primaryDark:'#0C1E66', pipe:'#2A63FF', pipeShadow:'#1743C9', dim:'rgba(0,0,0,.38)' };
 
-// Canvas / Ölçek
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const hudScore = document.getElementById('score');
@@ -57,11 +55,9 @@ function fit(){
 }
 addEventListener('resize', fit);
 
-// ==== Anti-cheat: session + seeded RNG ====
 let sessionToken = null, sessionSeed = null;
 let sessionPromise = null;
 
-// xorshift32 tabanlı deterministic RNG
 let rng = Math.random;
 function makeRngFromHexSeed(hex){
   const hi = parseInt(hex.slice(0,8),16) | 0;
@@ -92,41 +88,37 @@ async function ensureSession(){
   }
   return sessionPromise;
 }
-// =========================================
 
-// State & Fizik
 const State={NAME:'name',MENU:'menu',READY:'ready',PLAYING:'playing',GAMEOVER:'gameover',LB:'leaderboard'};
 let state=State.NAME;
 
 const BASE={GRAV:1800,FLAP:-520,PIPE_W:72,GAP_FRAC:0.28,SCROLL:220,SPAWN:1.25};
 let GRAV=0,FLAP=0,PIPE_W=0,PIPE_GAP=0,SCROLL=0,SPAWN_EVERY=BASE.SPAWN;
-let BASE_GAP=0;         // taban gap
-let BASE_SPACING=0;     // borular arası hedef x mesafesi (px)
+let BASE_GAP=0;        
+let BASE_SPACING=0;    
 
 function setPhysics(){
   GRAV=BASE.GRAV*SCALE; FLAP=BASE.FLAP*SCALE;
   PIPE_W=Math.max(44,Math.floor(BASE.PIPE_W*SCALE));
-  BASE_GAP=Math.max(130*SCALE,Math.floor(H*BASE.GAP_FRAC)); // başlangıç gap
+  BASE_GAP=Math.max(130*SCALE,Math.floor(H*BASE.GAP_FRAC)); 
   PIPE_GAP=BASE_GAP;
-  SCROLL=BASE.SCROLL*SCALE;     // başlangıç hızı
-  SPAWN_EVERY = BASE.SPAWN;     // default (ilk frame'ler için)
-  BASE_SPACING = 440 * SCALE;   // hızdan bağımsız hedef x mesafesi (~440px)
+  SCROLL=BASE.SCROLL*SCALE;     
+  SPAWN_EVERY = BASE.SPAWN;    
+  BASE_SPACING = 440 * SCALE;   
   bird.r=Math.max(20,Math.floor(24*SCALE));
   bird.x=Math.floor(Math.min(W*0.25,240*SCALE));
 }
 
-// Zorluk seviyesi (0..10) – hız için
 function difficultyLevel(score){
   let lvl = 0;
   if (score >= 10 && score < 30) {
-    lvl = 1 + Math.floor((score - 10) / 10);     // 10-19 ->1, 20-29 ->2
+    lvl = 1 + Math.floor((score - 10) / 10);   
   } else if (score >= 30) {
-    lvl = 3 + Math.floor((score - 30) / 5);      // 30-34 ->3, 35-39 ->4, ...
+    lvl = 3 + Math.floor((score - 30) / 5);  
   }
   return Math.min(lvl, 10);
 }
 
-// Entities + Anti-cheat input buffer
 const bird={x:0,y:0,vy:0,r:18};
 let pipes=[], t=0, score=0;
 let flapsMs = [];
@@ -143,19 +135,16 @@ function reset(){
   startAt = performance.now();
 }
 
-// RNG kullanan rand
 function rand(a,b){ return rng()*(b-a)+a; }
 function spawnPipe(){ const min=40*SCALE,max=H-PIPE_GAP-40*SCALE; pipes.push({x:W+50,top:rand(min,Math.max(min,max)),passed:false}); }
 function circleRect(cx,cy,r,rx,ry,rw,rh){ const nx=Math.max(rx,Math.min(cx,rx+rw)),ny=Math.max(ry,Math.min(cy,ry+rh)); const dx=cx-nx,dy=cy-ny; return dx*dx+dy*dy<=r*r; }
 
-// Input
 function flap(){
   const tag=document.activeElement && document.activeElement.tagName;
   if(tag==='INPUT'||tag==='TEXTAREA') return;
   if(state===State.READY) state=State.PLAYING;
   if(state===State.PLAYING){
     bird.vy=FLAP;
-    // flap zamanını kaydet
     flapsMs.push(Math.floor(performance.now() - startAt));
   }
   else if(state===State.GAMEOVER){ state=State.READY; reset(); }
@@ -168,7 +157,6 @@ addEventListener('keydown',(e)=>{
   if(state===State.GAMEOVER&&(e.code==='Enter'||e.code==='Space')){ e.preventDefault(); flap(); }
 },{passive:false});
 
-// UI (JS)
 function clearUI(){ ui.innerHTML=''; ui.style.background=''; }
 function card(html){ ui.style.background=THEME.dim; const c=document.createElement('div'); c.className='card'; c.innerHTML=html; ui.replaceChildren(c); return c; }
 
@@ -221,7 +209,6 @@ function drawUI(){
   clearUI();
 }
 
-// UI delegasyon
 ui.addEventListener('click',(e)=>{
   const el=e.target.closest('[data-action]'); if(!el) return;
   const act=el.getAttribute('data-action');
@@ -232,7 +219,6 @@ ui.addEventListener('click',(e)=>{
   }
   if(act==='play'){
     clearUI();
-    // oyun başlamadan session’ı garantile (RNG eşleşmesi için iyi olur)
     Promise.resolve().then(()=>ensureSession()).finally(()=>{
       state=State.READY; reset();
     });
@@ -250,7 +236,6 @@ ui.addEventListener('keydown',(e)=>{
   }
 });
 
-// Çizim
 function bg(){
   const g=ctx.createLinearGradient(0,0,0,H);
   g.addColorStop(0,THEME.primary); g.addColorStop(0.55,THEME.primaryMid); g.addColorStop(1,THEME.primaryDark);
@@ -260,7 +245,7 @@ const charImg = new Image();
 charImg.src = './assets/char.png';
 function drawBird() {
   const ready = charImg.complete && charImg.naturalWidth>0;
-  const size = bird.r * 8; // büyük karakter
+  const size = bird.r * 8; 
   ctx.save();
   ctx.translate(bird.x, bird.y);
   ctx.rotate(Math.atan2(bird.vy, 400 * SCALE) * 0.2);
@@ -279,7 +264,6 @@ function drawPipes(dt){
   }
 }
 
-// Döngü
 let last=performance.now();
 function loop(now){
   const dt=Math.min(0.034,(now-last)/1000); last=now;
@@ -291,7 +275,6 @@ function loop(now){
     t+=dt; if(t>=SPAWN_EVERY){ t=0; spawnPipe(); }
     drawPipes(dt);
 
-    // === Dinamik zorluk ===
     const lvl = difficultyLevel(score);
     let speedMul = 1 + 0.08 * lvl + 0.015 * (lvl * lvl);
 
@@ -318,7 +301,6 @@ function loop(now){
     else if (score >= 30) spacing *= 0.90;
 
     SPAWN_EVERY = Math.max(0.55, spacing / SCROLL);
-    // === /Dinamik zorluk ===
 
     if(bird.y-bird.r<=0 || bird.y+bird.r>=H){ gameOver(); }
     else{
@@ -337,7 +319,6 @@ function loop(now){
   requestAnimationFrame(loop);
 }
 
-// Game Over & Skor (server-verified submit)
 function gameOver(){
   if(state===State.GAMEOVER) return;
   state=State.GAMEOVER;
@@ -347,7 +328,6 @@ function gameOver(){
     best=score; localStorage.setItem(LS.best,String(best)); hudBest.textContent=best;
   }
 
-  // server doğrulaması — sadece session varsa gönder
   (async ()=>{
     try{
       if(!sessionToken || !sessionSeed || !nickname) return;
@@ -368,7 +348,6 @@ function gameOver(){
       });
       const j = await r.json();
       if(j?.ok && typeof j.best === 'number'){
-        // server'daki verified best ile HUD'u senkronla
         best = j.best; hudBest.textContent = best;
       }
     }catch(e){}
@@ -377,9 +356,7 @@ function gameOver(){
   drawUI();
 }
 
-// Başlat
 fit(); reset(); drawUI(); requestAnimationFrame(loop);
-// oturum almayı erkenden başlat (non-blocking)
 ensureSession();
 
 if(nickname){ state=State.MENU; drawUI(); } else { state=State.NAME; drawUI(); }
