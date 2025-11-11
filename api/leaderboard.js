@@ -1,12 +1,13 @@
 // /api/leaderboard.js
-const { sql } = require('@vercel/postgres');
-module.exports.config = { runtime: 'nodejs' };
+import { sql } from '@vercel/postgres';
 
-module.exports = async (req, res) => {
+export const config = { runtime: 'nodejs' };
+
+export default async function handler(req, res) {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    const name = (url.searchParams.get('name') || '').trim();
-    const LIMIT = 20;
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 20)));
+    const me = (url.searchParams.get('me') || '').trim();
 
     await sql`
       CREATE TABLE IF NOT EXISTS scores (
@@ -17,35 +18,29 @@ module.exports = async (req, res) => {
       );
     `;
 
-    // Top 20
     const { rows: top } = await sql`
       SELECT name, best
       FROM scores
       ORDER BY best DESC, updated_at ASC
-      LIMIT ${LIMIT};
+      LIMIT ${limit};
     `;
 
     let you = null;
-    if (name) {
-      // rank hesapla
-      const { rows: yr } = await sql`
-        SELECT name, best, rank
-        FROM (
-          SELECT name, best,
-                 RANK() OVER (ORDER BY best DESC, updated_at ASC) AS rank
-          FROM scores
-        ) t
-        WHERE name = ${name}
-        LIMIT 1;
-      `;
-      if (yr.length) {
-        you = { name: yr[0].name, best: yr[0].best, rank: Number(yr[0].rank) };
+    let inTop = false;
+
+    if (me) {
+      inTop = top.some(r => r.name === me);
+      if (!inTop) {
+        const { rows: mine } = await sql`
+          SELECT name, best FROM scores WHERE name=${me} LIMIT 1;
+        `;
+        if (mine.length) you = mine[0];
       }
     }
 
-    return res.status(200).json({ ok:true, rows: top, you });
+    return res.status(200).json({ ok: true, rows: top, you, inTop });
   } catch (e) {
     console.error('leaderboard error:', e);
-    return res.status(500).json({ ok:false, error:'server_error' });
+    return res.status(500).json({ ok: false, error: 'server_error' });
   }
-};
+}
