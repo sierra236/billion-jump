@@ -63,17 +63,22 @@ let state=State.NAME;
 
 const BASE={GRAV:1800,FLAP:-520,PIPE_W:72,GAP_FRAC:0.28,SCROLL:220,SPAWN:1.25};
 let GRAV=0,FLAP=0,PIPE_W=0,PIPE_GAP=0,SCROLL=0,SPAWN_EVERY=BASE.SPAWN;
+let BASE_GAP=0;         // taban gap
+let BASE_SPACING=0;     // borular arası hedef x mesafesi (px)
 
 function setPhysics(){
   GRAV=BASE.GRAV*SCALE; FLAP=BASE.FLAP*SCALE;
   PIPE_W=Math.max(44,Math.floor(BASE.PIPE_W*SCALE));
-  PIPE_GAP=Math.max(130*SCALE,Math.floor(H*BASE.GAP_FRAC));
-  SCROLL=BASE.SCROLL*SCALE;
+  BASE_GAP=Math.max(130*SCALE,Math.floor(H*BASE.GAP_FRAC)); // başlangıç gap
+  PIPE_GAP=BASE_GAP;
+  SCROLL=BASE.SCROLL*SCALE;     // başlangıç hızı
+  SPAWN_EVERY = BASE.SPAWN;     // default (ilk frame'ler için)
+  BASE_SPACING = 440 * SCALE;   // hızdan bağımsız hedef x mesafesi (~440px)
   bird.r=Math.max(20,Math.floor(24*SCALE));
   bird.x=Math.floor(Math.min(W*0.25,240*SCALE));
 }
 
-// Zorluk seviyesi (0..10)
+// Zorluk seviyesi (0..10) – hız için
 function difficultyLevel(score){
   let lvl = 0;
   if (score >= 10 && score < 30) {
@@ -92,7 +97,7 @@ let nickname=localStorage.getItem(LS.name)||'';
 let best=Number(localStorage.getItem(LS.best)||0); hudBest.textContent=best;
 state = nickname?State.MENU:State.NAME;
 
-function reset(){ bird.y=Math.floor(H/2); bird.vy=0; pipes.length=0; t=0; score=0; hudScore.textContent='0'; }
+function reset(){ bird.y=Math.floor(H/2); bird.vy=0; pipes.length=0; t=0; score=0; hudScore.textContent='0'; PIPE_GAP=BASE_GAP; }
 function rand(a,b){ return Math.random()*(b-a)+a; }
 function spawnPipe(){ const min=40*SCALE,max=H-PIPE_GAP-40*SCALE; pipes.push({x:W+50,top:rand(min,Math.max(min,max)),passed:false}); }
 function circleRect(cx,cy,r,rx,ry,rw,rh){ const nx=Math.max(rx,Math.min(cx,rx+rw)),ny=Math.max(ry,Math.min(cy,ry+rh)); const dx=cx-nx,dy=cy-ny; return dx*dx+dy*dy<=r*r; }
@@ -172,7 +177,7 @@ ui.addEventListener('click',(e)=>{
   const act=el.getAttribute('data-action');
   if(act==='save-name'){
     const v=(document.getElementById('nameInput')?.value||'').trim();
-    if(v.length<3||v.length>20) return document.getElementById('nameInput').focus();
+    if(v.length<2||v.length>20) return document.getElementById('nameInput').focus(); // min 2
     nickname=v; localStorage.setItem(LS.name,nickname); state=State.MENU; drawUI(); return;
   }
   if(act==='play'){ clearUI(); state=State.READY; reset(); return; }
@@ -184,7 +189,7 @@ ui.addEventListener('click',(e)=>{
 ui.addEventListener('keydown',(e)=>{
   if(e.key==='Enter' && document.getElementById('nameInput')){
     const v=document.getElementById('nameInput').value.trim();
-    if(v.length>=3 && v.length<=20){ nickname=v; localStorage.setItem(LS.name,nickname); state=State.MENU; drawUI(); }
+    if(v.length>=2 && v.length<=20){ nickname=v; localStorage.setItem(LS.name,nickname); state=State.MENU; drawUI(); }
   }
 });
 
@@ -198,7 +203,7 @@ const charImg = new Image();
 charImg.src = './assets/char.png';
 function drawBird() {
   const ready = charImg.complete && charImg.naturalWidth>0;
-  const size = bird.r * 8; // karakter büyük
+  const size = bird.r * 8; // büyük karakter
   ctx.save();
   ctx.translate(bird.x, bird.y);
   ctx.rotate(Math.atan2(bird.vy, 400 * SCALE) * 0.2);
@@ -230,17 +235,38 @@ function loop(now){
     drawPipes(dt);
 
     // === Dinamik zorluk ===
+    // Hız seviyesi (0..10)
     const lvl = difficultyLevel(score);
-    const speedMul = 1 + 0.08 * lvl + 0.015 * (lvl * lvl);
+    // temel hız çarpanı (kuadratik artış)
+    let speedMul = 1 + 0.08 * lvl + 0.015 * (lvl * lvl);
+
+    // 50'den sonra ekstra "hard mode" (kuadratik çarpan)
+    if (score >= 50) {
+      const hard = (score - 50) / 5;                 // her +5 puanda artan birim
+      const hardMul = 1 + 0.12 * hard + 0.06 * (hard * hard);
+      speedMul *= hardMul;
+      speedMul = Math.min(speedMul, 3.8);            // üst tavan
+    }
     SCROLL = BASE.SCROLL * SCALE * speedMul;
 
-    const baseGap = H * BASE.GAP_FRAC;
-    const gapReduce = (12 * lvl + 6 * lvl * lvl) * SCALE;
-    const minGap = 96 * SCALE;
-    PIPE_GAP = Math.max(minGap, Math.floor(baseGap - gapReduce));
+    // Gap daralması: her 20 puanda bir adım; 50'den sonra her puanda ekstra daralma
+    const STEP_GAP = 14 * SCALE;      // her 20 puan daralma
+    const MIN_GAP  = 90 * SCALE;      // alt sınır
+    const gapStep  = Math.floor(score / 20);
+    let targetGap  = BASE_GAP - gapStep * STEP_GAP;
+    if (score >= 50) {
+      const extra = (score - 50) * (0.8 * SCALE);    // her puanda ~0.8px ek daralma
+      targetGap -= extra;
+    }
+    PIPE_GAP = Math.max(MIN_GAP, Math.floor(targetGap));
 
-    const spawnReduce = 0.05 * lvl + 0.01 * (lvl * lvl);
-    SPAWN_EVERY = Math.max(0.80, BASE.SPAWN - spawnReduce);
+    // --- Hıza göre spawn: boruların x aralığını sabitle / sıklaştır ---
+    let spacing = BASE_SPACING;      // hedef x mesafe (px)
+    if (score >= 50) spacing *= 0.82;   // 50+ daha yakın
+    else if (score >= 30) spacing *= 0.90; // 30+ biraz yakın
+
+    // süre = mesafe / hız  (alt sınırla kıstık ki aşırı spam olmasın)
+    SPAWN_EVERY = Math.max(0.55, spacing / SCROLL);
     // === /Dinamik zorluk ===
 
     if(bird.y-bird.r<=0 || bird.y+bird.r>=H){ gameOver(); }
