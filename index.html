@@ -17,19 +17,16 @@
   #hud .score{position:absolute;top:16px;font-variant-numeric:tabular-nums;text-shadow:0 2px 8px rgba(0,0,0,.6)}
   #hud .left{left:18px}
   #hud .center{left:50%;transform:translateX(-50%)}
-    /* Brand (sağ üst) */
-    #brand{
-    position:fixed;
-    top:14px; right:16px;
-    z-index:10001;           
-    pointer-events:auto;     
-    font-weight:800; letter-spacing:.3px; opacity:.92;
+  /* Brand (sağ üst) */
+  #brand{
+    position:fixed; top:14px; right:16px; z-index:10001;
+    pointer-events:auto; font-weight:800; letter-spacing:.3px; opacity:.92;
     padding:6px 10px; border-radius:12px; border:1px solid var(--border);
     background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.03));
     box-shadow:0 8px 24px rgba(0,0,0,.35); backdrop-filter:blur(6px);
     font-size:12px; color:var(--text); text-decoration:none;
-    }
-    #brand:hover{ opacity:1; transform:translateY(-1px); transition:.15s }
+  }
+  #brand:hover{ opacity:1; transform:translateY(-1px); transition:.15s }
 
   /* UI container */
   #ui{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:9999;pointer-events:auto}
@@ -123,9 +120,12 @@ async function ensureSession(){
           sessionSeed = j.seed;
           sessionToken = j.sessionToken;
           rng = makeRngFromHexSeed(sessionSeed);
+          console.log('session ok', { seed: sessionSeed, token: sessionToken.slice(0,12)+'…' });
+        } else {
+          console.warn('session failed', j);
         }
       })
-      .catch(()=>{})
+      .catch(err=>{ console.error('session error', err); })
       .finally(()=>{ sessionPromise = null; });
   }
   return sessionPromise;
@@ -392,11 +392,18 @@ function gameOver(){
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify(payload)
       });
-      const j = await r.json();
+      // ---- LOGS (teşhis için) ----
+      console.log('POST /api/score status', r.status);
+      let j = null;
+      try { j = await r.json(); } catch (e) { console.error('score json parse error', e); }
+      console.log('score resp', j);
+      // -----------------------------
       if(j?.ok && typeof j.best === 'number'){
         best = j.best; hudBest.textContent = best;
       }
-    }catch(e){}
+    }catch(e){
+      console.error('score submit error', e);
+    }
   })();
 
   drawUI();
