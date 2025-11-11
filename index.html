@@ -93,44 +93,6 @@ function fit(){
 }
 addEventListener('resize', fit);
 
-/* === Session (server-verified) === */
-let sessionToken = null, sessionSeed = null;
-let sessionPromise = null;
-
-let rng = Math.random;
-function makeRngFromHexSeed(hex){
-  const hi = parseInt(hex.slice(0,8),16) | 0;
-  const lo = parseInt(hex.slice(8),16) | 0;
-  let s = (hi ^ lo) >>> 0 || 0x6d2b79f5;
-  return function(){
-    s ^= s << 13; s >>>= 0;
-    s ^= s >>> 17; s >>>= 0;
-    s ^= s << 5;  s >>>= 0;
-    return (s >>> 0) / 0x100000000;
-  };
-}
-
-async function ensureSession(){
-  if (sessionToken && sessionSeed) return;
-  if (!sessionPromise){
-    sessionPromise = fetch('/api/session', { method:'POST' })
-      .then(r => r.json())
-      .then(j => {
-        if (j?.seed && j?.sessionToken){
-          sessionSeed = j.seed;
-          sessionToken = j.sessionToken;
-          rng = makeRngFromHexSeed(sessionSeed);
-          console.log('session ok', { seed: sessionSeed, token: sessionToken.slice(0,12)+'…' });
-        } else {
-          console.warn('session failed', j);
-        }
-      })
-      .catch(err=>{ console.error('session error', err); })
-      .finally(()=>{ sessionPromise = null; });
-  }
-  return sessionPromise;
-}
-
 /* === State & Physics === */
 const State={NAME:'name',MENU:'menu',READY:'ready',PLAYING:'playing',GAMEOVER:'gameover',LB:'leaderboard'};
 let state=State.NAME;
@@ -160,8 +122,6 @@ function difficultyLevel(score){
 
 const bird={x:0,y:0,vy:0,r:18};
 let pipes=[], t=0, score=0;
-let flapsMs = [];
-let startAt = 0;
 
 const LS={name:'bj_name',best:'billion_jump_best'};
 let nickname=localStorage.getItem(LS.name)||'';
@@ -170,11 +130,9 @@ state = nickname?State.MENU:State.NAME;
 
 function reset(){
   bird.y=Math.floor(H/2); bird.vy=0; pipes.length=0; t=0; score=0; hudScore.textContent='0'; PIPE_GAP=BASE_GAP;
-  flapsMs = [];
-  startAt = performance.now();
 }
 
-function rand(a,b){ return rng()*(b-a)+a; }
+function rand(a,b){ return Math.random()*(b-a)+a; }
 function spawnPipe(){ const min=40*SCALE,max=H-PIPE_GAP-40*SCALE; pipes.push({x:W+50,top:rand(min,Math.max(min,max)),passed:false}); }
 function circleRect(cx,cy,r,rx,ry,rw,rh){ const nx=Math.max(rx,Math.min(cx,rx+rw)),ny=Math.max(ry,Math.min(cy,ry+rh)); const dx=cx-nx,dy=cy-ny; return dx*dx+dy*dy<=r*r; }
 
@@ -185,7 +143,6 @@ function flap(){
   if(state===State.READY) state=State.PLAYING;
   if(state===State.PLAYING){
     bird.vy=FLAP;
-    flapsMs.push(Math.floor(performance.now() - startAt));
   } else if(state===State.GAMEOVER){ state=State.READY; reset(); }
   drawUI();
 }
@@ -254,7 +211,7 @@ function drawUI(){
 }
 
 /* UI events */
-ui.addEventListener('click', async (e)=>{
+ui.addEventListener('click', (e)=>{
   const el=e.target.closest('[data-action]'); if(!el) return;
   const act=el.getAttribute('data-action');
   if(act==='save-name'){
@@ -262,29 +219,12 @@ ui.addEventListener('click', async (e)=>{
     if(v.length<2||v.length>20) return document.getElementById('nameInput').focus();
     nickname=v; localStorage.setItem(LS.name,nickname); state=State.MENU; drawUI(); return;
   }
-if (act === 'play') {
-  // UI: küçük loading kartı
-  card(`
-    <h1 class="title">Getting ready…</h1>
-    <div class="muted">Syncing session & seed</div>
-  `);
-
-  // her oyunda yeni token/seed al
-  sessionToken = null;
-  sessionSeed  = null;
-
-  try {
-    await ensureSession();           // <-- seed ve rng garanti
-  } catch (e) {
-    console.error('session failed before play', e);
+  if (act === 'play') {
+    clearUI();
+    state = State.READY;
+    reset();
+    return;
   }
-
-  state = State.READY;
-  reset();
-  clearUI();
-  return;
-}
-
   if(act==='lb'){ state=State.LB; drawUI(); return; }
   if(act==='back'){ state=State.MENU; drawUI(); return; }
   if(act==='menu'){ state=State.MENU; drawUI(); return; }
@@ -390,36 +330,21 @@ function gameOver(){
     best=score; localStorage.setItem(LS.best,String(best)); hudBest.textContent=best;
   }
 
+  // Sade gönderim: sadece ad + skor
   (async ()=>{
     try{
-      if(!sessionToken || !sessionSeed || !nickname) return;
-      const payload = {
-        name: nickname,
-        sessionToken: sessionToken,
-        seed: sessionSeed,
-        W, H, SCALE,
-        inputs: {
-          flapsMs,
-          durationMs: Math.floor(performance.now() - startAt)
-        }
-      };
+      if(!nickname) return;
       const r = await fetch('/api/score',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ name: nickname, score })
       });
-      // ---- LOGS (teşhis için) ----
-      console.log('POST /api/score status', r.status);
-      let j = null;
-      try { j = await r.json(); } catch (e) { console.error('score json parse error', e); }
-      console.log('score resp', j);
-      // -----------------------------
+      const j = await r.json().catch(()=>null);
       if(j?.ok && typeof j.best === 'number'){
         best = j.best; hudBest.textContent = best;
+        localStorage.setItem(LS.best, String(best));
       }
-    }catch(e){
-      console.error('score submit error', e);
-    }
+    }catch(e){}
   })();
 
   drawUI();
@@ -427,7 +352,6 @@ function gameOver(){
 
 /* Start */
 fit(); reset(); drawUI(); requestAnimationFrame(loop);
-ensureSession();
 
 if(nickname){ state=State.MENU; drawUI(); } else { state=State.NAME; drawUI(); }
 })();
