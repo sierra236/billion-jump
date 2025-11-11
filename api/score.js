@@ -7,7 +7,6 @@ const SECRET = process.env.SESSION_SECRET || 'dev-secret-change-me';
 /** Token doğrulama (hem yeni "b64.payload.sig" hem eski "seed:ts:sig" formatını destekler) */
 function verifySessionToken(token) {
   if (!token) throw new Error('bad_token');
-  // yeni format: "<base64url(payload)>.<hexsig>"
   if (token.includes('.')) {
     const [b64, sig] = token.split('.');
     const payload = Buffer.from(b64, 'base64url').toString('utf8');
@@ -18,7 +17,6 @@ function verifySessionToken(token) {
     if (Date.now() - obj.iat > 5 * 60 * 1000) throw new Error('expired'); // 5 dk
     return { seed: obj.seed };
   }
-  // eski format: "seed:timestamp:signature"
   const parts = token.split(':');
   if (parts.length !== 3) throw new Error('bad_token');
   const [seed, ts, sig] = parts;
@@ -61,13 +59,23 @@ function simulateRun({ seed, inputs, W, H, SCALE }) {
     const dx=cx-nx,dy=cy-ny; return dx*dx+dy*dy<=r*r;
   }
 
+  // ---- FLAP zamanlaması: ms aralığına göre tüket ----
+  const flaps = Array.isArray(inputs.flapsMs)
+    ? inputs.flapsMs.map(v => Math.max(0, Math.floor(v))).sort((a,b)=>a-b)
+    : [];
+  let fi = 0;
+
   const dt=8.333, dtSec=dt/1000;
-  const flapSet=new Set((inputs.flapsMs||[]).map(x=>Math.floor(x)));
   const totalMs=Math.min(Math.max(1000, inputs.durationMs|0), 10*60*1000);
   let ms=0, alive=true;
 
   while(alive && ms<=totalMs){
-    if (flapSet.has(ms)) bird.vy=FLAP;
+    // bu frame aralığı [ms, ms+dt)
+    const nextEdge = ms + dt + 1e-6;
+    while (fi < flaps.length && flaps[fi] >= ms && flaps[fi] < nextEdge) {
+      bird.vy = FLAP;   // aynı frame'de birden fazla flap varsa hepsi işlenir
+      fi++;
+    }
 
     // spawn zamanlaması
     let spacing=BASE_SPACING;
@@ -165,11 +173,12 @@ module.exports = async (req, res) => {
     // simülasyon
     const { score: verifiedScore } = simulateRun({ seed, inputs, W, H, SCALE });
 
+    // 0 skoru yazma (sadece bilgi döndür)
     if (verifiedScore <= 0) {
-    return res.status(200).json({ ok: true, best: null, verifiedScore });
-}
+      return res.status(200).json({ ok: true, best: null, verifiedScore });
+    }
 
-    // basit mantık dışı kontrol (isteğe bağlı)
+    // aşırı uç kontrol
     const sps = verifiedScore / Math.max(1, (inputs.durationMs/1000));
     if (verifiedScore > 2000 || sps > 8) {
       return res.status(400).json({ ok:false, error:'implausible' });
