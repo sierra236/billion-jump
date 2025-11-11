@@ -57,6 +57,43 @@ function fit(){
 }
 addEventListener('resize', fit);
 
+// ==== Anti-cheat: session + seeded RNG ====
+let sessionToken = null, sessionSeed = null;
+let sessionPromise = null;
+
+// xorshift32 tabanlı deterministic RNG
+let rng = Math.random;
+function makeRngFromHexSeed(hex){
+  const hi = parseInt(hex.slice(0,8),16) | 0;
+  const lo = parseInt(hex.slice(8),16) | 0;
+  let s = (hi ^ lo) >>> 0 || 0x6d2b79f5;
+  return function(){
+    s ^= s << 13; s >>>= 0;
+    s ^= s >>> 17; s >>>= 0;
+    s ^= s << 5;  s >>>= 0;
+    return (s >>> 0) / 0x100000000;
+  };
+}
+
+async function ensureSession(){
+  if (sessionToken && sessionSeed) return;
+  if (!sessionPromise){
+    sessionPromise = fetch('/api/session', { method:'POST' })
+      .then(r => r.json())
+      .then(j => {
+        if (j?.seed && j?.sessionToken){
+          sessionSeed = j.seed;
+          sessionToken = j.sessionToken;
+          rng = makeRngFromHexSeed(sessionSeed);
+        }
+      })
+      .catch(()=>{})
+      .finally(()=>{ sessionPromise = null; });
+  }
+  return sessionPromise;
+}
+// =========================================
+
 // State & Fizik
 const State={NAME:'name',MENU:'menu',READY:'ready',PLAYING:'playing',GAMEOVER:'gameover',LB:'leaderboard'};
 let state=State.NAME;
@@ -89,16 +126,25 @@ function difficultyLevel(score){
   return Math.min(lvl, 10);
 }
 
-// Entities
+// Entities + Anti-cheat input buffer
 const bird={x:0,y:0,vy:0,r:18};
 let pipes=[], t=0, score=0;
+let flapsMs = [];
+let startAt = 0;
+
 const LS={name:'bj_name',best:'billion_jump_best'};
 let nickname=localStorage.getItem(LS.name)||'';
 let best=Number(localStorage.getItem(LS.best)||0); hudBest.textContent=best;
 state = nickname?State.MENU:State.NAME;
 
-function reset(){ bird.y=Math.floor(H/2); bird.vy=0; pipes.length=0; t=0; score=0; hudScore.textContent='0'; PIPE_GAP=BASE_GAP; }
-function rand(a,b){ return Math.random()*(b-a)+a; }
+function reset(){
+  bird.y=Math.floor(H/2); bird.vy=0; pipes.length=0; t=0; score=0; hudScore.textContent='0'; PIPE_GAP=BASE_GAP;
+  flapsMs = [];
+  startAt = performance.now();
+}
+
+// RNG kullanan rand
+function rand(a,b){ return rng()*(b-a)+a; }
 function spawnPipe(){ const min=40*SCALE,max=H-PIPE_GAP-40*SCALE; pipes.push({x:W+50,top:rand(min,Math.max(min,max)),passed:false}); }
 function circleRect(cx,cy,r,rx,ry,rw,rh){ const nx=Math.max(rx,Math.min(cx,rx+rw)),ny=Math.max(ry,Math.min(cy,ry+rh)); const dx=cx-nx,dy=cy-ny; return dx*dx+dy*dy<=r*r; }
 
@@ -107,7 +153,11 @@ function flap(){
   const tag=document.activeElement && document.activeElement.tagName;
   if(tag==='INPUT'||tag==='TEXTAREA') return;
   if(state===State.READY) state=State.PLAYING;
-  if(state===State.PLAYING) bird.vy=FLAP;
+  if(state===State.PLAYING){
+    bird.vy=FLAP;
+    // flap zamanını kaydet
+    flapsMs.push(Math.floor(performance.now() - startAt));
+  }
   else if(state===State.GAMEOVER){ state=State.READY; reset(); }
   drawUI();
 }
@@ -180,7 +230,14 @@ ui.addEventListener('click',(e)=>{
     if(v.length<2||v.length>20) return document.getElementById('nameInput').focus(); // min 2
     nickname=v; localStorage.setItem(LS.name,nickname); state=State.MENU; drawUI(); return;
   }
-  if(act==='play'){ clearUI(); state=State.READY; reset(); return; }
+  if(act==='play'){
+    clearUI();
+    // oyun başlamadan session’ı garantile (RNG eşleşmesi için iyi olur)
+    Promise.resolve().then(()=>ensureSession()).finally(()=>{
+      state=State.READY; reset();
+    });
+    return;
+  }
   if(act==='lb'){ state=State.LB; drawUI(); return; }
   if(act==='back'){ state=State.MENU; drawUI(); return; }
   if(act==='menu'){ state=State.MENU; drawUI(); return; }
@@ -235,37 +292,31 @@ function loop(now){
     drawPipes(dt);
 
     // === Dinamik zorluk ===
-    // Hız seviyesi (0..10)
     const lvl = difficultyLevel(score);
-    // temel hız çarpanı (kuadratik artış)
     let speedMul = 1 + 0.08 * lvl + 0.015 * (lvl * lvl);
 
-    // 50'den sonra ekstra "hard mode" (kuadratik çarpan)
     if (score >= 50) {
-      const hard = (score - 50) / 5;                 // her +5 puanda artan birim
+      const hard = (score - 50) / 5;
       const hardMul = 1 + 0.12 * hard + 0.06 * (hard * hard);
       speedMul *= hardMul;
-      speedMul = Math.min(speedMul, 3.8);            // üst tavan
+      speedMul = Math.min(speedMul, 3.8);
     }
     SCROLL = BASE.SCROLL * SCALE * speedMul;
 
-    // Gap daralması: her 20 puanda bir adım; 50'den sonra her puanda ekstra daralma
-    const STEP_GAP = 14 * SCALE;      // her 20 puan daralma
-    const MIN_GAP  = 90 * SCALE;      // alt sınır
+    const STEP_GAP = 14 * SCALE;
+    const MIN_GAP  = 90 * SCALE;
     const gapStep  = Math.floor(score / 20);
     let targetGap  = BASE_GAP - gapStep * STEP_GAP;
     if (score >= 50) {
-      const extra = (score - 50) * (0.8 * SCALE);    // her puanda ~0.8px ek daralma
+      const extra = (score - 50) * (0.8 * SCALE);
       targetGap -= extra;
     }
     PIPE_GAP = Math.max(MIN_GAP, Math.floor(targetGap));
 
-    // --- Hıza göre spawn: boruların x aralığını sabitle / sıklaştır ---
-    let spacing = BASE_SPACING;      // hedef x mesafe (px)
-    if (score >= 50) spacing *= 0.82;   // 50+ daha yakın
-    else if (score >= 30) spacing *= 0.90; // 30+ biraz yakın
+    let spacing = BASE_SPACING;
+    if (score >= 50) spacing *= 0.82;
+    else if (score >= 30) spacing *= 0.90;
 
-    // süre = mesafe / hız  (alt sınırla kıstık ki aşırı spam olmasın)
     SPAWN_EVERY = Math.max(0.55, spacing / SCROLL);
     // === /Dinamik zorluk ===
 
@@ -286,19 +337,51 @@ function loop(now){
   requestAnimationFrame(loop);
 }
 
-// Game Over & Skor
+// Game Over & Skor (server-verified submit)
 function gameOver(){
   if(state===State.GAMEOVER) return;
   state=State.GAMEOVER;
+
+  // yerel best'i UI için tut (opsiyonel)
   if(score>best){
     best=score; localStorage.setItem(LS.best,String(best)); hudBest.textContent=best;
-    if(nickname){ fetch('/api/score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nickname,score:best})}).catch(()=>{}); }
   }
+
+  // server doğrulaması — sadece session varsa gönder
+  (async ()=>{
+    try{
+      if(!sessionToken || !sessionSeed || !nickname) return;
+      const payload = {
+        name: nickname,
+        sessionToken: sessionToken,
+        seed: sessionSeed,
+        W, H, SCALE,
+        inputs: {
+          flapsMs,
+          durationMs: Math.floor(performance.now() - startAt)
+        }
+      };
+      const r = await fetch('/api/score',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const j = await r.json();
+      if(j?.ok && typeof j.best === 'number'){
+        // server'daki verified best ile HUD'u senkronla
+        best = j.best; hudBest.textContent = best;
+      }
+    }catch(e){}
+  })();
+
   drawUI();
 }
 
 // Başlat
 fit(); reset(); drawUI(); requestAnimationFrame(loop);
+// oturum almayı erkenden başlat (non-blocking)
+ensureSession();
+
 if(nickname){ state=State.MENU; drawUI(); } else { state=State.NAME; drawUI(); }
 
 })();
