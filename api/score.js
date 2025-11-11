@@ -125,7 +125,16 @@ function simulateRun({ seed, inputs, W, H, SCALE }) {
 
     ms += dt;
   }
-  return { score };
+
+  // Ölüm anında geometrik olarak "geride kalmış" boruları tekrar say (frame farklarını düzeltmek için)
+  try {
+    const passedByGeom = pipes.reduce((n, p) => n + ((p.x + PIPE_W) < bird.x ? 1 : 0), 0);
+    if (passedByGeom > score) score = passedByGeom;
+  } catch (e) {
+    // hiç kritik değil, devam et
+  }
+
+  return { score: Math.max(0, Math.floor(score)) };
 }
 
 module.exports = async (req, res) => {
@@ -192,17 +201,24 @@ module.exports = async (req, res) => {
     }
 
     // sadece en yüksek skoru tut (upsert)
-    const { rows } = await sql`
-      INSERT INTO scores (name, best)
-      VALUES (${n}, ${verifiedScore})
-      ON CONFLICT (name)
-      DO UPDATE SET best = GREATEST(scores.best, EXCLUDED.best), updated_at = NOW()
-      RETURNING best;
-    `;
+    let returnedBest = null;
+    try {
+      const { rows } = await sql`
+        INSERT INTO scores (name, best)
+        VALUES (${n}, ${verifiedScore})
+        ON CONFLICT (name)
+        DO UPDATE SET best = GREATEST(scores.best, EXCLUDED.best), updated_at = NOW()
+        RETURNING best;
+      `;
+      returnedBest = rows && rows[0] ? rows[0].best : null;
+    } catch (e) {
+      console.error('DB upsert failed', { name: n, verifiedScore, err: e && e.message });
+      return res.status(500).json({ ok:false, error:'db_error' });
+    }
 
-    return res.status(200).json({ ok:true, best: rows[0].best, verifiedScore });
+    return res.status(200).json({ ok:true, best: returnedBest, verifiedScore });
   } catch (e) {
-    console.error(e);
+    console.error('score handler error', e && e.stack ? e.stack : e);
     return res.status(500).json({ ok:false, error:'server_error' });
   }
 };
