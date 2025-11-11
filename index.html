@@ -262,13 +262,16 @@ ui.addEventListener('click',(e)=>{
     if(v.length<2||v.length>20) return document.getElementById('nameInput').focus();
     nickname=v; localStorage.setItem(LS.name,nickname); state=State.MENU; drawUI(); return;
   }
-  if(act==='play'){
+    if (act === 'play') {
     clearUI();
-    Promise.resolve().then(()=>ensureSession()).finally(()=>{
-      state=State.READY; reset();
+    sessionToken = null;
+    sessionSeed = null;
+    Promise.resolve().then(() => ensureSession()).finally(() => {
+        state = State.READY;
+        reset();
     });
     return;
-  }
+    }
   if(act==='lb'){ state=State.LB; drawUI(); return; }
   if(act==='back'){ state=State.MENU; drawUI(); return; }
   if(act==='menu'){ state=State.MENU; drawUI(); return; }
