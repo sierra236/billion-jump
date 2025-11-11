@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Billion Jump</title>
+<style>
+  :root{ --text:#EAF1FF; --glass:rgba(10,16,40,.85); --border:rgba(255,255,255,.14); }
+  html,body{margin:0;padding:0;overflow:hidden;background:#0b1224;color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  canvas{position:fixed;inset:0;width:100vw;height:100vh;display:block;z-index:0}
+  #hud{position:fixed;inset:0;pointer-events:none;z-index:2;font-weight:800}
+  #hud .score{position:absolute;top:16px;font-variant-numeric:tabular-nums;text-shadow:0 2px 8px rgba(0,0,0,.6)}
+  #hud .left{left:18px} #hud .center{left:50%;transform:translateX(-50%)}
+  #ui{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:9999;pointer-events:auto}
+  .card{width:min(560px,92vw);padding:28px 26px 24px;border-radius:18px;background:var(--glass);border:1px solid var(--border);backdrop-filter:blur(10px);box-shadow:0 18px 44px rgba(0,0,0,.55);text-align:center}
+  .title{font-size:36px;margin:0 0 8px}
+  .muted{opacity:.75;margin-bottom:12px}
+  .row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+  .btn{padding:12px 18px;border-radius:14px;border:1px solid var(--border);cursor:pointer;background:rgba(255,255,255,.08);color:var(--text);font-weight:800}
+  .btn:hover{transform:translateY(-1px);background:rgba(255,255,255,.12)}
+  .input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:var(--text);outline:none}
+  .input:focus{box-shadow:0 0 0 3px rgba(31,80,255,.25);border-color:rgba(31,80,255,.6)}
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="hud" aria-hidden="true">
+  <div class="score left">Highest: <span id="best">0</span></div>
+  <div class="score center">Score: <span id="score">0</span></div>
+</div>
+
+<div id="ui"></div>
+
+<script>
+(()=>{
+// Tema
+const THEME = { primary:'#1F50FF', primaryMid:'#1636C9', primaryDark:'#0C1E66', pipe:'#2A63FF', pipeShadow:'#1743C9', dim:'rgba(0,0,0,.38)' };
+
+// Canvas / Ölçek
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const hudScore = document.getElementById('score');
+const hudBest  = document.getElementById('best');
+const ui = document.getElementById('ui');
+
+let W=0,H=0,dpr=1,SCALE=1;
+function fit(){
+  dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.floor(W*dpr); canvas.height = Math.floor(H*dpr);
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  SCALE = H/720;
+  setPhysics();
+}
+addEventListener('resize', fit);
+
+// State & Fizik
+const State={NAME:'name',MENU:'menu',READY:'ready',PLAYING:'playing',GAMEOVER:'gameover',LB:'leaderboard'};
+let state=State.NAME;
+
+const BASE={GRAV:1800,FLAP:-520,PIPE_W:72,GAP_FRAC:0.28,SCROLL:220,SPAWN:1.25};
+let GRAV=0,FLAP=0,PIPE_W=0,PIPE_GAP=0,SCROLL=0,SPAWN_EVERY=BASE.SPAWN;
+
+function setPhysics(){
+  GRAV=BASE.GRAV*SCALE; FLAP=BASE.FLAP*SCALE;
+  PIPE_W=Math.max(44,Math.floor(BASE.PIPE_W*SCALE));
+  PIPE_GAP=Math.max(130*SCALE,Math.floor(H*BASE.GAP_FRAC));
+  SCROLL=BASE.SCROLL*SCALE;
+  bird.r=Math.max(20,Math.floor(24*SCALE));
+  bird.x=Math.floor(Math.min(W*0.25,240*SCALE));
+}
+
+// Zorluk seviyesi (0..10)
+function difficultyLevel(score){
+  let lvl = 0;
+  if (score >= 10 && score < 30) {
+    lvl = 1 + Math.floor((score - 10) / 10);     // 10-19 ->1, 20-29 ->2
+  } else if (score >= 30) {
+    lvl = 3 + Math.floor((score - 30) / 5);      // 30-34 ->3, 35-39 ->4, ...
+  }
+  return Math.min(lvl, 10);
+}
+
+// Entities
+const bird={x:0,y:0,vy:0,r:18};
+let pipes=[], t=0, score=0;
+const LS={name:'bj_name',best:'billion_jump_best'};
+let nickname=localStorage.getItem(LS.name)||'';
+let best=Number(localStorage.getItem(LS.best)||0); hudBest.textContent=best;
+state = nickname?State.MENU:State.NAME;
+
+function reset(){ bird.y=Math.floor(H/2); bird.vy=0; pipes.length=0; t=0; score=0; hudScore.textContent='0'; }
+function rand(a,b){ return Math.random()*(b-a)+a; }
+function spawnPipe(){ const min=40*SCALE,max=H-PIPE_GAP-40*SCALE; pipes.push({x:W+50,top:rand(min,Math.max(min,max)),passed:false}); }
+function circleRect(cx,cy,r,rx,ry,rw,rh){ const nx=Math.max(rx,Math.min(cx,rx+rw)),ny=Math.max(ry,Math.min(cy,ry+rh)); const dx=cx-nx,dy=cy-ny; return dx*dx+dy*dy<=r*r; }
+
+// Input
+function flap(){
+  const tag=document.activeElement && document.activeElement.tagName;
+  if(tag==='INPUT'||tag==='TEXTAREA') return;
+  if(state===State.READY) state=State.PLAYING;
+  if(state===State.PLAYING) bird.vy=FLAP;
+  else if(state===State.GAMEOVER){ state=State.READY; reset(); }
+  drawUI();
+}
+addEventListener('keydown',(e)=>{
+  const tag=document.activeElement && document.activeElement.tagName;
+  if(tag==='INPUT'||tag==='TEXTAREA') return;
+  if(e.code==='Space'||e.code==='ArrowUp'){ e.preventDefault(); flap(); }
+  if(state===State.GAMEOVER&&(e.code==='Enter'||e.code==='Space')){ e.preventDefault(); flap(); }
+},{passive:false});
+
+// UI (JS)
+function clearUI(){ ui.innerHTML=''; ui.style.background=''; }
+function card(html){ ui.style.background=THEME.dim; const c=document.createElement('div'); c.className='card'; c.innerHTML=html; ui.replaceChildren(c); return c; }
+
+function showName(){
+  const c = card(`
+    <h1 class="title">Billion Jump</h1>
+    <div class="muted">Enter a nickname to get started</div>
+    <div class="row" style="margin-top:8px">
+      <input id="nameInput" class="input" type="text" maxlength="20" placeholder="nickname" style="min-width:320px">
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" data-action="save-name">Continue</button>
+    </div>`);
+  setTimeout(()=>c.querySelector('#nameInput').focus(),0);
+}
+
+function showMenu(){
+  card(`<h1 class="title">Welcome, ${nickname||'Player'}</h1>
+    <div class="row">
+      <button class="btn" data-action="play">Play</button>
+      <button class="btn" data-action="lb">Leaderboard</button>
+    </div>`);
+}
+
+function showLeaderboard(){
+  const c=card(`<h1 class="title">Leaderboard</h1>
+    <div id="lb" style="max-height:60vh;overflow:auto;text-align:left;padding:8px;display:flex;flex-direction:column;gap:6px"><div class="muted">Loading...</div></div>
+    <div class="row" style="margin-top:10px"><button class="btn" data-action="back">Back</button></div>`);
+  fetch('/api/leaderboard?limit=100').then(r=>r.json()).then(d=>{
+    const rows=Array.isArray(d.rows)?d.rows:[]; const lb=c.querySelector('#lb');
+    if(!rows.length){ lb.innerHTML='<div class="muted">No scores yet</div>'; return; }
+    lb.innerHTML=rows.map((r,i)=>`<div style="display:flex;justify-content:space-between;border-bottom:1px dashed rgba(255,255,255,.1);padding:6px 2px"><span>${i+1}. ${r.name}</span><b>${r.best}</b></div>`).join('');
+  }).catch(()=>{ c.querySelector('#lb').innerHTML='<div class="muted">Unable to load</div>'; });
+}
+
+function showGameOver(){
+  card(`<h1 class="title">Game Over</h1>
+    <div class="muted" style="margin-bottom:8px">Score: <b>${score}</b> · Best: <b>${best}</b></div>
+    <div class="row">
+      <button class="btn" data-action="restart">Restart</button>
+      <button class="btn" data-action="menu">Menu</button>
+    </div>`);
+}
+
+function drawUI(){
+  if(state===State.NAME) return showName();
+  if(state===State.MENU) return showMenu();
+  if(state===State.LB)   return showLeaderboard();
+  if(state===State.GAMEOVER) return showGameOver();
+  clearUI();
+}
+
+// UI delegasyon
+ui.addEventListener('click',(e)=>{
+  const el=e.target.closest('[data-action]'); if(!el) return;
+  const act=el.getAttribute('data-action');
+  if(act==='save-name'){
+    const v=(document.getElementById('nameInput')?.value||'').trim();
+    if(v.length<3||v.length>20) return document.getElementById('nameInput').focus();
+    nickname=v; localStorage.setItem(LS.name,nickname); state=State.MENU; drawUI(); return;
+  }
+  if(act==='play'){ clearUI(); state=State.READY; reset(); return; }
+  if(act==='lb'){ state=State.LB; drawUI(); return; }
+  if(act==='back'){ state=State.MENU; drawUI(); return; }
+  if(act==='menu'){ state=State.MENU; drawUI(); return; }
+  if(act==='restart'){ clearUI(); state=State.READY; reset(); return; }
+});
+ui.addEventListener('keydown',(e)=>{
+  if(e.key==='Enter' && document.getElementById('nameInput')){
+    const v=document.getElementById('nameInput').value.trim();
+    if(v.length>=3 && v.length<=20){ nickname=v; localStorage.setItem(LS.name,nickname); state=State.MENU; drawUI(); }
+  }
+});
+
+// Çizim
+function bg(){
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,THEME.primary); g.addColorStop(0.55,THEME.primaryMid); g.addColorStop(1,THEME.primaryDark);
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+}
+const charImg = new Image();
+charImg.src = './assets/char.png';
+function drawBird() {
+  const ready = charImg.complete && charImg.naturalWidth>0;
+  const size = bird.r * 8; // karakter büyük
+  ctx.save();
+  ctx.translate(bird.x, bird.y);
+  ctx.rotate(Math.atan2(bird.vy, 400 * SCALE) * 0.2);
+  if (ready) ctx.drawImage(charImg, -size / 2, -size / 2, size, size);
+  else { ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(0,0,bird.r,0,Math.PI*2); ctx.fill(); }
+  ctx.restore();
+}
+function drawPipes(dt){
+  const speed=SCROLL;
+  for(let i=pipes.length-1;i>=0;i--){
+    const p=pipes[i]; p.x-=speed*dt;
+    ctx.fillStyle=THEME.pipeShadow; ctx.fillRect(p.x+4,0,PIPE_W,p.top); ctx.fillRect(p.x+4,p.top+PIPE_GAP,PIPE_W,H-(p.top+PIPE_GAP));
+    ctx.fillStyle=THEME.pipe;       ctx.fillRect(p.x,0,PIPE_W,p.top);    ctx.fillRect(p.x,p.top+PIPE_GAP,PIPE_W,H-(p.top+PIPE_GAP));
+    if(!p.passed && p.x+PIPE_W<bird.x){ p.passed=true; score++; hudScore.textContent=score; }
+    if(p.x+PIPE_W<-60) pipes.splice(i,1);
+  }
+}
+
+// Döngü
+let last=performance.now();
+function loop(now){
+  const dt=Math.min(0.034,(now-last)/1000); last=now;
+
+  bg();
+
+  if(state===State.PLAYING){
+    bird.vy+=GRAV*dt; bird.y+=bird.vy*dt;
+    t+=dt; if(t>=SPAWN_EVERY){ t=0; spawnPipe(); }
+    drawPipes(dt);
+
+    // === Dinamik zorluk ===
+    const lvl = difficultyLevel(score);
+    const speedMul = 1 + 0.08 * lvl + 0.015 * (lvl * lvl);
+    SCROLL = BASE.SCROLL * SCALE * speedMul;
+
+    const baseGap = H * BASE.GAP_FRAC;
+    const gapReduce = (12 * lvl + 6 * lvl * lvl) * SCALE;
+    const minGap = 96 * SCALE;
+    PIPE_GAP = Math.max(minGap, Math.floor(baseGap - gapReduce));
+
+    const spawnReduce = 0.05 * lvl + 0.01 * (lvl * lvl);
+    SPAWN_EVERY = Math.max(0.80, BASE.SPAWN - spawnReduce);
+    // === /Dinamik zorluk ===
+
+    if(bird.y-bird.r<=0 || bird.y+bird.r>=H){ gameOver(); }
+    else{
+      for(const p of pipes){
+        if(circleRect(bird.x,bird.y,bird.r, p.x,0,PIPE_W,p.top) ||
+           circleRect(bird.x,bird.y,bird.r, p.x,p.top+PIPE_GAP,PIPE_W, H-(p.top+PIPE_GAP))){
+          gameOver(); break;
+        }
+      }
+    }
+  } else if(state===State.READY){
+    const tt=now/1000; bird.y=H/2 + Math.sin(tt*3)*10*SCALE;
+  }
+
+  drawBird();
+  requestAnimationFrame(loop);
+}
+
+// Game Over & Skor
+function gameOver(){
+  if(state===State.GAMEOVER) return;
+  state=State.GAMEOVER;
+  if(score>best){
+    best=score; localStorage.setItem(LS.best,String(best)); hudBest.textContent=best;
+    if(nickname){ fetch('/api/score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nickname,score:best})}).catch(()=>{}); }
+  }
+  drawUI();
+}
+
+// Başlat
+fit(); reset(); drawUI(); requestAnimationFrame(loop);
+if(nickname){ state=State.MENU; drawUI(); } else { state=State.NAME; drawUI(); }
+
+})();
+</script>
+</body>
+</html>
